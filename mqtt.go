@@ -2,13 +2,14 @@ package mqttout
 
 import (
 	"fmt"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/outputs/codec"
 	"github.com/elastic/beats/libbeat/publisher"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 func init() {
@@ -17,7 +18,7 @@ func init() {
 
 type mqttOutput struct {
 	beat     beat.Info
-	stats    *outputs.Stats
+	observer outputs.Observer
 	codec    codec.Codec
 	client   mqtt.Client
 	topic    string
@@ -25,9 +26,14 @@ type mqttOutput struct {
 
 func makeMQTTout(
 	beat beat.Info,
-	stats *outputs.Stats,
+	observer outputs.Observer,
 	cfg *common.Config,
 ) (outputs.Group, error) {
+
+	if !cfg.HasField("index") {
+		cfg.SetString("index", -1, beat.Beat)
+	}
+
 	config := defaultConfig
 	if err := cfg.Unpack(&config); err != nil {
 		return outputs.Fail(err)
@@ -36,12 +42,13 @@ func makeMQTTout(
 	// disable bulk support in publisher pipeline
 	cfg.SetInt("bulk_max_size", -1, -1)
 
-	mo := &mqttOutput{beat: beat, stats: stats}
+	mo := &mqttOutput{beat: beat, observer: observer}
 	if err := mo.init(beat, config); err != nil {
 		return outputs.Fail(err)
 	}
-	
+
 	return outputs.Success(-1, 0, mo)
+
 }
 
 func (out *mqttOutput) init(beat beat.Info, config config) error {
@@ -64,7 +71,7 @@ func (out *mqttOutput) init(beat beat.Info, config config) error {
 
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
-			panic(token.Error())
+		panic(token.Error())
 	}
 
 	out.client = client
@@ -82,7 +89,7 @@ func (out *mqttOutput) Publish(
 ) error {
 	defer batch.ACK()
 
-	st := out.stats
+	st := out.observer
 	events := batch.Events()
 	st.NewBatch(len(events))
 
@@ -90,7 +97,7 @@ func (out *mqttOutput) Publish(
 	for i := range events {
 
 		event := &events[i]
-		
+
 		serializedEvent, err := out.codec.Encode(out.beat.Beat, &event.Content)
 		if err != nil {
 			if event.Guaranteed() {
@@ -103,9 +110,8 @@ func (out *mqttOutput) Publish(
 			continue
 		}
 
-		
 		if token := out.client.Publish(out.topic, 1, false, serializedEvent); token.Wait() && token.Error() != nil {
-			st.WriteError()
+			st.WriteError(token.Error())
 
 			if event.Guaranteed() {
 				logp.Critical("Publishing event failed with: %v", token.Error())
@@ -114,10 +120,10 @@ func (out *mqttOutput) Publish(
 			}
 
 			dropped++
-			continue			
+			continue
 		}
 
- 		st.WriteBytes(len(serializedEvent) + 1)
+		st.WriteBytes(len(serializedEvent) + 1)
 	}
 
 	st.Dropped(dropped)
