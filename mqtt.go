@@ -131,3 +131,8 @@ func (out *mqttOutput) Publish(
 
 	return nil
 }
+
+
+func (out *mqttOutput) String() string {
+	return "MQTT"
+}
