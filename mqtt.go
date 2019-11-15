@@ -25,6 +25,7 @@ type mqttOutput struct {
 }
 
 func makeMQTTout(
+	_ outputs.IndexManager,
 	beat beat.Info,
 	observer outputs.Observer,
 	cfg *common.Config,
@@ -131,7 +132,6 @@ func (out *mqttOutput) Publish(
 
 	return nil
 }
-
 
 func (out *mqttOutput) String() string {
 	return "MQTT"
